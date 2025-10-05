@@ -1,0 +1,22 @@
+.card-key-display {
+  margin-top: 12px;
+  padding: 8px;
+  background: #071029;
+  border-radius: 8px;
+}
+.key-sequence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.key-card {
+  background: #fff;
+  color: #042;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-weight: bold;
+}
+button {
+  margin-top: 8px;
+}

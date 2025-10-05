@@ -1,0 +1,46 @@
+.card-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 48px);
+  gap: 6px;
+  justify-content: center;
+  background: rgba(0, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 10px;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.pick-card {
+  width: 48px;
+  height: 68px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #16213e, #1a1a2e);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.05);
+}
+
+.pick-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 0 15px var(--accent);
+}
+
+.pick-card.selected {
+  border-color: var(--highlight);
+  box-shadow: 0 0 20px var(--highlight);
+  transform: scale(1.1);
+}
+
+.card-suit {
+  font-size: 18px;
+}
+.card-label {
+  font-size: 12px;
+}
