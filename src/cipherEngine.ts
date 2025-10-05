@@ -8,26 +8,47 @@ export type StepRecord = {
   xorInfo?: string;
 };
 
+/* -------------------------------------------------------------------------- */
+/*                             Value Normalization                            */
+/* -------------------------------------------------------------------------- */
+
 function normalizeFaceValue(v: number, len: number) {
-  if (v === 1) return 1;
-  if (v === 11) return Math.min(11, len);
-  if (v === 12) return Math.min(12, len);
-  if (v === 13) return len;
+  if (v === 1) return 1;                     // Ace
+  if (v === 11) return Math.min(11, len);    // Jack
+  if (v === 12) return Math.min(12, len);    // Queen (mirror logic separate)
+  if (v === 13) return len;                  // King = full deck
   return Math.min(v, len);
 }
 
+/* -------------------------------------------------------------------------- */
+/*                             Key String Parser                              */
+/* -------------------------------------------------------------------------- */
+
 export function parseKey(raw: string): KeyToken[] {
   const tokens = raw.split(/\s+/).filter(Boolean);
-  const map: Record<string, Suit> = { "♠": "SPADE", "S": "SPADE", "♣": "CLUB", "C": "CLUB", "♥": "HEART", "H": "HEART", "♦": "DIAMOND", "D": "DIAMOND", "JOKER": "JOKER", "JOOKER": "JOKER" };
+  const map: Record<string, Suit> = {
+    "♠": "SPADE", "S": "SPADE",
+    "♣": "CLUB",  "C": "CLUB",
+    "♥": "HEART", "H": "HEART",
+    "♦": "DIAMOND", "D": "DIAMOND",
+    "JOKER": "JOKER", "🃏": "JOKER"
+  };
+
   return tokens.map((t, i) => {
     const r = t.trim();
-    if (r.toUpperCase().startsWith("JOKER") || r === "🃏" || r.toUpperCase()==="JO") return { suit: "JOKER", value: i + 1, raw: r };
+    if (r.toUpperCase().startsWith("JOKER") || r === "🃏") {
+      return { suit: "JOKER", value: i + 1, raw: r };
+    }
     const suitChar = r[0];
     const suit = map[suitChar.toUpperCase()] ?? map[suitChar] ?? "SPADE";
     const val = parseInt(r.slice(1)) || 0;
     return { suit, value: val || 0, raw: r };
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                Operations                                  */
+/* -------------------------------------------------------------------------- */
 
 function cut(deck: string[], n: number) {
   const top = deck.slice(0, n);
@@ -40,22 +61,65 @@ function reverseTop(deck: string[], n: number) {
   return top.concat(deck.slice(n));
 }
 
-function faro(deck: string[], times: number) {
-  let d = deck.slice();
-  for (let t = 0; t < times; t++) {
-    const half = Math.floor(d.length / 2);
-    const left = d.slice(0, half);
-    const right = d.slice(half);
-    const out: string[] = [];
-    const max = Math.max(left.length, right.length);
-    for (let i = 0; i < max; i++) {
-      if (i < left.length) out.push(left[i]);
-      if (i < right.length) out.push(right[i]);
-    }
-    d = out;
+/* ---------------------------- FARO (Offset-based) ---------------------------- */
+
+function faro(deck: string[], n: number) {
+  const len = deck.length;
+  if (len < 2) return deck.slice();
+
+  // Always split deck in half
+  const half = Math.floor(len / 2);
+  const left = deck.slice(0, half);
+  const right = deck.slice(half);
+
+  const result: string[] = [];
+
+  // Add the first n cards from left half directly
+  for (let i = 0; i < n && i < left.length; i++) {
+    result.push(left[i]);
   }
-  return d;
+
+  // Now interleave remaining from left and right
+  let i = n;
+  let j = 0;
+  while (i < left.length || j < right.length) {
+    if (j < right.length) result.push(right[j++]);
+    if (i < left.length) result.push(left[i++]);
+  }
+
+  return result;
 }
+
+
+/* Reverse of FARO */
+function unfaro(deck: string[], n: number) {
+  const len = deck.length;
+  if (len < 2) return deck.slice();
+
+  const half = Math.floor(len / 2);
+  const left: string[] = [];
+  const right: string[] = [];
+
+  // Step 1: First n cards definitely belong to left
+  let idx = 0;
+  for (; idx < n && idx < deck.length; idx++) {
+    left.push(deck[idx]);
+  }
+
+  // Step 2: Remaining cards come in interleaved pattern (R,L,R,L,...)
+  let toggle = true; // start with right (since faro added right first)
+  while (idx < deck.length) {
+    if (toggle) right.push(deck[idx]);
+    else left.push(deck[idx]);
+    toggle = !toggle;
+    idx++;
+  }
+
+  // Step 3: Recombine to original left + right halves
+  return left.concat(right);
+}
+
+/* -------------------------------------------------------------------------- */
 
 function rotateLeft(deck: string[], n: number) {
   n = n % deck.length;
@@ -80,8 +144,31 @@ function xorWithN(deck: string[], n: number) {
   return { deck: out, details: details.join("\n") };
 }
 
+/* -------------------------------------------------------------------------- */
+/*                         Face Card Mirror Handling                          */
+/* -------------------------------------------------------------------------- */
+
+function isQueen(value: number) {
+  return value === 12;
+}
+
+function maybeMirror(deck: string[], value: number, action: (d: string[]) => string[]): string[] {
+  if (isQueen(value)) {
+    const mirrored = deck.slice().reverse();
+    const result = action(mirrored).reverse();
+    return result;
+  } else {
+    return action(deck);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                Apply Step                                  */
+/* -------------------------------------------------------------------------- */
+
 export function applyStep(deckIn: string[], token: KeyToken, posInKey: number): StepRecord {
   const len = deckIn.length;
+
   if (token.suit === "JOKER") {
     const mirrored = deckIn.slice().reverse();
     const asciiSum = mirrored.reduce((s, c) => s + c.charCodeAt(0), 0);
@@ -91,32 +178,64 @@ export function applyStep(deckIn: string[], token: KeyToken, posInKey: number): 
     const inner = applyStep(mirrored, { suit: chosenSuit, value: N }, posInKey);
     const xorSeed = (mirrored[0].charCodeAt(0) + mirrored[mirrored.length - 1].charCodeAt(0)) % 7;
     const xored = xorWithN(inner.deck, xorSeed);
-    return { deck: xored.deck, desc: `JOKER: mirrored → applied ${chosenSuit} with N=${N} then XOR seed ${xorSeed}`, affectedIndexes: Array.from({ length: len }, (_, i) => i), xorInfo: xored.details + `\nJoker XOR seed applied: ${xorSeed}` };
+    return {
+      deck: xored.deck,
+      desc: `JOKER: mirrored → applied ${chosenSuit} with N=${N} then XOR seed ${xorSeed}`,
+      affectedIndexes: Array.from({ length: len }, (_, i) => i),
+      xorInfo: xored.details + `\nJoker XOR seed applied: ${xorSeed}`
+    };
   }
 
   if (token.suit === "SPADE") {
     const val = normalizeFaceValue(token.value, len);
-    const res = cut(deckIn, val);
-    return { deck: res, desc: `♠${token.value} CUT ${val}`, affectedIndexes: Array.from({ length: len }, (_, i) => i) };
+    const res = maybeMirror(deckIn, token.value, (d) => cut(d, val));
+    return {
+      deck: res,
+      desc: `♠${token.value} CUT ${val}${isQueen(token.value) ? " (mirrored)" : ""}`,
+      affectedIndexes: Array.from({ length: len }, (_, i) => i)
+    };
   }
+
   if (token.suit === "HEART") {
     const val = normalizeFaceValue(token.value, len);
-    const res = reverseTop(deckIn, val);
-    return { deck: res, desc: `♥${token.value} REVERSE top ${val}`, affectedIndexes: Array.from({ length: val }, (_, i) => i) };
+    const res = maybeMirror(deckIn, token.value, (d) => reverseTop(d, val));
+    return {
+      deck: res,
+      desc: `♥${token.value} REVERSE top ${val}${isQueen(token.value) ? " (mirrored)" : ""}`,
+      affectedIndexes: Array.from({ length: val }, (_, i) => i)
+    };
   }
+
   if (token.suit === "CLUB") {
     const val = normalizeFaceValue(token.value, len);
-    const res = faro(deckIn, val);
-    return { deck: res, desc: `♣${token.value} FARO x${val}`, affectedIndexes: Array.from({ length: len }, (_, i) => i) };
+    const res = maybeMirror(deckIn, token.value, (d) => faro(d, val));
+    return {
+      deck: res,
+      desc: `♣${token.value} FARO split at ${val}${isQueen(token.value) ? " (mirrored)" : ""}`,
+      affectedIndexes: Array.from({ length: len }, (_, i) => i)
+    };
   }
+
   if (token.suit === "DIAMOND") {
     const val = normalizeFaceValue(token.value, len);
-    const rotated = rotateLeft(deckIn, val);
-    const xored = xorWithN(rotated, val);
-    return { deck: xored.deck, desc: `♦${token.value} ROTATE ${val} + XOR ${val}`, affectedIndexes: Array.from({ length: len }, (_, i) => i), xorInfo: xored.details };
+    const res = maybeMirror(deckIn, token.value, (d) => {
+      const rotated = rotateLeft(d, val);
+      const xored = xorWithN(rotated, val);
+      return xored.deck;
+    });
+    return {
+      deck: res,
+      desc: `♦${token.value} ROTATE ${val} + XOR ${val}${isQueen(token.value) ? " (mirrored)" : ""}`,
+      affectedIndexes: Array.from({ length: len }, (_, i) => i)
+    };
   }
-  return { deck: deckIn.slice(), desc: `NOOP` };
+
+  return { deck: deckIn.slice(), desc: "NOOP" };
 }
+
+/* -------------------------------------------------------------------------- */
+/*                               Invert Step                                  */
+/* -------------------------------------------------------------------------- */
 
 export function invertStep(record: StepRecord, token: KeyToken, posInKey: number): StepRecord {
   if (token.suit === "JOKER") {
@@ -130,44 +249,48 @@ export function invertStep(record: StepRecord, token: KeyToken, posInKey: number
     const unxor = xorWithN(record.deck, xorSeed);
     const innerInv = invertStep({ deck: unxor.deck, desc: "" }, { suit: chosenSuit, value: N }, posInKey);
     const unmirrored = innerInv.deck.slice().reverse();
-    return { deck: unmirrored, desc: `JOKER inverse` , xorInfo: unxor.details };
+    return { deck: unmirrored, desc: `JOKER inverse`, xorInfo: unxor.details };
   }
+
   if (token.suit === "SPADE") {
     const val = normalizeFaceValue(token.value, record.deck.length);
-    const res = rotateRight(record.deck, val);
-    return { deck: res, desc: `undo ♠${token.value} CUT (rotate right ${val})` };
+    const res = maybeMirror(record.deck, token.value, (d) => rotateRight(d, val));
+    return { deck: res, desc: `undo ♠${token.value} CUT${isQueen(token.value) ? " (mirrored)" : ""}` };
   }
+
   if (token.suit === "HEART") {
     const val = normalizeFaceValue(token.value, record.deck.length);
-    const res = reverseTop(record.deck, val);
-    return { deck: res, desc: `undo ♥${token.value} REVERSE top ${val}` };
+    const res = maybeMirror(record.deck, token.value, (d) => reverseTop(d, val));
+    return { deck: res, desc: `undo ♥${token.value} REVERSE${isQueen(token.value) ? " (mirrored)" : ""}` };
   }
+
   if (token.suit === "CLUB") {
     const val = normalizeFaceValue(token.value, record.deck.length);
-    let d = record.deck.slice();
-    for (let t = 0; t < val; t++) {
-      const left: string[] = [];
-      const right: string[] = [];
-      for (let i = 0; i < d.length; i++) {
-        if (i % 2 === 0) left.push(d[i]);
-        else right.push(d[i]);
-      }
-      d = left.concat(right);
-    }
-    return { deck: d, desc: `undo ♣${token.value} FARO x${val}` };
+    const res = maybeMirror(record.deck, token.value, (d) => unfaro(d, val));
+    return { deck: res, desc: `undo ♣${token.value} FARO${isQueen(token.value) ? " (mirrored)" : ""}` };
   }
+
   if (token.suit === "DIAMOND") {
     const val = normalizeFaceValue(token.value, record.deck.length);
-    const unxor = xorWithN(record.deck, val);
-    const unrot = rotateRight(unxor.deck, val);
-    return { deck: unrot, desc: `undo ♦${token.value} ROTATE+XOR (right ${val} then XOR ${val})`, xorInfo: unxor.details };
+    const res = maybeMirror(record.deck, token.value, (d) => {
+      const unxor = xorWithN(d, val);
+      const unrot = rotateRight(unxor.deck, val);
+      return unrot;
+    });
+    return { deck: res, desc: `undo ♦${token.value} ROTATE+XOR${isQueen(token.value) ? " (mirrored)" : ""}` };
   }
+
   return { deck: record.deck.slice(), desc: "noop" };
 }
+
+/* -------------------------------------------------------------------------- */
+/*                               Trace Builder                                */
+/* -------------------------------------------------------------------------- */
 
 export function buildTrace(initialDeck: string[], key: KeyToken[], encrypt = true): StepRecord[] {
   const trace: StepRecord[] = [];
   trace.push({ deck: initialDeck.slice(), desc: "Initial" });
+
   if (encrypt) {
     let cur = initialDeck.slice();
     for (let i = 0; i < key.length; i++) {
@@ -181,10 +304,10 @@ export function buildTrace(initialDeck: string[], key: KeyToken[], encrypt = tru
     for (let i = key.length - 1; i >= 0; i--) {
       const token = key[i];
       const rec = invertStep({ deck: cur, desc: "" }, token, i + 1);
-
       trace.push(rec);
       cur = rec.deck.slice();
     }
   }
+
   return trace;
 }
